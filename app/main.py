@@ -1,15 +1,23 @@
 from pypdf import PdfReader
 
-# Path to the PDF
 pdf_path = "data/pdfs/Notes.pdf"
 
-# Open the PDF
 reader = PdfReader(pdf_path)
 
-# Print number of pages
 print(f"Total Pages: {len(reader.pages)}")
 
-# Read each page
-for page in reader.pages:
+# Store all text
+full_text = ""
+
+for page_number, page in enumerate(reader.pages, start=1):
+
+    print(f"Reading Page {page_number}...")
+
     text = page.extract_text()
-    print(text)
+
+    if text:
+        full_text += text + "\n"
+
+print("\nExtraction Completed!")
+
+print(f"Total Characters: {len(full_text)}")
