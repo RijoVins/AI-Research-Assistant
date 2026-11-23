@@ -1,4 +1,5 @@
-# Tip: for a smaller CPU-only install, first run:
+# Pinned, tested versions. Install with:  pip install -r requirements.txt
+# Tip: for a much smaller CPU-only install, first run:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 chromadb==1.5.9
 langchain==1.3.14
@@ -11,3 +12,6 @@ pypdf==6.14.2
 python-dotenv==1.2.4
 sentence-transformers==6.3.0
 streamlit==1.67.0
+
+# Install this project itself (editable)
+-e .

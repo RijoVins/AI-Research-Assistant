@@ -1,7 +1,7 @@
 """Web UI for the AI Research Assistant.
 
 Run from the project root:
-    streamlit run app/streamlit_app.py
+    streamlit run streamlit_app.py
 """
 
 import hashlib
@@ -9,11 +9,11 @@ import os
 from datetime import datetime
 
 import streamlit as st
-from pypdf import PdfReader
 
-from rag_pipeline import DEFAULT_PDF, PROJECT_ROOT, AIResearchAssistant, load_embeddings
+from ai_research_assistant.assistant import MissingAPIKeyError, ResearchAssistant, load_embeddings
+from ai_research_assistant.config import settings
+from ai_research_assistant.ingestion import count_pages
 
-UPLOAD_DIR = PROJECT_ROOT / "data" / "pdfs" / "uploads"
 SUGGESTED_QUESTIONS = [
     "Summarize the main topics of this document",
     "What are the key definitions I should know?",
@@ -28,20 +28,20 @@ st.set_page_config(page_title="AI Research Assistant", page_icon="📚", layout=
 # ----------------------------------------------------------------------
 @st.cache_resource(show_spinner="Loading the AI model (first launch only)...")
 def get_embeddings():
-    return load_embeddings()
+    return load_embeddings(settings.embedding_model)
 
 
 @st.cache_resource(show_spinner=False)
-def get_assistant(pdf_path: str, content_hash: str) -> AIResearchAssistant:
+def get_assistant(pdf_path: str, content_hash: str) -> ResearchAssistant:
     # content_hash is part of the cache key so an edited file gets a fresh assistant
-    assistant = AIResearchAssistant(pdf_path=pdf_path, embeddings=get_embeddings())
-    assistant.load_vector_store()  # instant if this PDF was indexed before
+    assistant = ResearchAssistant(pdf_path, embeddings=get_embeddings())
+    assistant.load_index()  # instant if this PDF was indexed before
     return assistant
 
 
 @st.cache_data(show_spinner=False)
 def page_count(pdf_path: str, content_hash: str) -> int:
-    return len(PdfReader(pdf_path).pages)
+    return count_pages(pdf_path)
 
 
 def file_hash(path) -> str:
@@ -53,6 +53,8 @@ def friendly_error(e: Exception) -> str:
     """Turn API/library exceptions into messages a user can act on."""
     import groq
 
+    if isinstance(e, MissingAPIKeyError):
+        return "🔑 Add your Groq API key above to start asking questions."
     if isinstance(e, groq.AuthenticationError):
         return "🔑 Your Groq API key was rejected. Check that it's correct and paste it again."
     if isinstance(e, groq.RateLimitError):
@@ -60,8 +62,10 @@ def friendly_error(e: Exception) -> str:
     if isinstance(e, groq.APIConnectionError):
         return "🌐 Couldn't reach Groq. Check your internet connection and try again."
     if isinstance(e, groq.NotFoundError):
-        return ("🤖 The configured AI model isn't available. Set `GROQ_MODEL` in your "
-                ".env file to a current Groq model.")
+        return (
+            "🤖 The configured AI model isn't available. Set `GROQ_MODEL` in your "
+            ".env file to a current Groq model."
+        )
     return f"Something went wrong: {e}"
 
 
@@ -107,7 +111,7 @@ with st.sidebar:
             st.markdown(f"**📄 {os.path.basename(path)}**")
             info = f"{page_count(path, file_hash(path))} pages"
             if assistant_for_stats.is_ready:
-                info += f" · {assistant_for_stats.vector_store._collection.count()} chunks indexed"
+                info += f" · {assistant_for_stats.chunk_count()} chunks indexed"
             st.caption(info)
         if st.button("↩️ Change document", use_container_width=True):
             st.session_state.pdf_path = None
@@ -116,9 +120,11 @@ with st.sidebar:
         messages = st.session_state.chats.get(path, [])
         if messages:
             st.download_button(
-                "⬇️ Download chat", chat_as_markdown(os.path.basename(path), messages),
+                "⬇️ Download chat",
+                chat_as_markdown(os.path.basename(path), messages),
                 file_name=f"chat_{os.path.splitext(os.path.basename(path))[0]}.md",
-                mime="text/markdown", use_container_width=True,
+                mime="text/markdown",
+                use_container_width=True,
             )
             if st.button("🗑️ Clear chat", use_container_width=True):
                 st.session_state.chats[path] = []
@@ -132,9 +138,12 @@ with st.sidebar:
 
     with st.expander("⚙️ Advanced settings"):
         k = st.slider(
-            "Passages per answer", 1, 10, 4,
+            "Passages per answer",
+            1,
+            10,
+            settings.top_k,
             help="How many of the most relevant passages the AI reads before answering. "
-                 "More = broader answers, but slower.",
+            "More = broader answers, but slower.",
         )
 
     with st.expander("ℹ️ How does it work?"):
@@ -160,20 +169,21 @@ if not st.session_state.pdf_path:
     )
 
     uploaded = st.file_uploader(
-        "**Upload a PDF to get started**", type="pdf",
+        "**Upload a PDF to get started**",
+        type="pdf",
         help="PDFs with selectable text work best. Scanned images can't be read.",
     )
     if uploaded is not None:
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        path = UPLOAD_DIR / os.path.basename(uploaded.name)
+        settings.upload_dir.mkdir(parents=True, exist_ok=True)
+        path = settings.upload_dir / os.path.basename(uploaded.name)
         path.write_bytes(uploaded.getvalue())
         open_document(str(path))
         st.rerun()
 
-    if DEFAULT_PDF.exists():
+    if settings.sample_pdf.exists():
         c1, c2 = st.columns([1, 2], vertical_alignment="center")
         if c1.button("✨ Try the sample notes", type="primary", use_container_width=True):
-            open_document(str(DEFAULT_PDF))
+            open_document(str(settings.sample_pdf))
             st.rerun()
         c2.caption("No PDF handy? Explore the included Machine Learning study notes.")
 
@@ -194,7 +204,7 @@ if not st.session_state.pdf_path:
         ("🔎", "Ask", "Your question is matched to passages by *meaning*, not keywords."),
         ("✅", "Verify", "Get a clear answer with page numbers and the exact source passages."),
     ]
-    for col, (icon, title, text) in zip(cols, steps):
+    for col, (icon, title, text) in zip(cols, steps, strict=True):
         with col, st.container(border=True):
             st.markdown(f"### {icon}\n**{title}**")
             st.caption(text)
@@ -220,7 +230,7 @@ if not assistant.is_ready:
     with st.status(f"Preparing **{name}** (first time only)...", expanded=True) as status:
         bar = st.progress(0.0, text="Starting...")
         try:
-            assistant.ingest_pdf(progress=lambda f, msg: bar.progress(min(f, 1.0), text=msg))
+            assistant.build_index(progress=lambda f, msg: bar.progress(min(f, 1.0), text=msg))
         except Exception as e:
             assistant.vector_store = None
             status.update(label="Couldn't process this PDF", state="error")
@@ -236,14 +246,16 @@ if not has_key:
     with st.container(border=True):
         st.markdown("**🔑 Connect the AI to start asking questions**")
         st.caption(
-            "Paste a free Groq API key from [console.groq.com/keys](https://console.groq.com/keys). "
+            "Paste a free Groq API key from "
+            "[console.groq.com/keys](https://console.groq.com/keys). "
             "To skip this step next time, save it as `GROQ_API_KEY` in the project's `.env` file."
         )
-        key = st.text_input("Groq API key", type="password", placeholder="gsk_...",
-                            label_visibility="collapsed")
+        key = st.text_input(
+            "Groq API key", type="password", placeholder="gsk_...", label_visibility="collapsed"
+        )
         if key:
             os.environ["GROQ_API_KEY"] = key.strip()
-            assistant._llm = None
+            assistant.reset_llm()
             st.rerun()
 
 # Chat history
@@ -277,15 +289,19 @@ if question:
     with st.chat_message("assistant"):
         try:
             with st.spinner("Searching your document..."):
-                result = assistant.ask_stream(question)
-            answer = st.write_stream(result["answer"])
-            if result["pages"]:
-                st.caption(f"📄 Sources: pages {', '.join(map(str, result['pages']))}")
-            show_sources(result["source_docs"])
-            messages.append({
-                "role": "assistant", "content": answer,
-                "pages": result["pages"], "sources": result["source_docs"],
-            })
+                tokens, retrieval = assistant.stream(question)
+            answer = st.write_stream(tokens)
+            if retrieval.pages:
+                st.caption(f"📄 Sources: pages {', '.join(map(str, retrieval.pages))}")
+            show_sources(retrieval.documents)
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "pages": retrieval.pages,
+                    "sources": retrieval.documents,
+                }
+            )
         except Exception as e:
             messages.pop()  # drop the unanswered question so the user can retry
             st.error(friendly_error(e))
