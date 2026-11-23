@@ -1,23 +1,53 @@
-from pypdf import PdfReader
+"""Interactive command-line AI Research Assistant over your PDF notes.
 
-pdf_path = "data/pdfs/Notes.pdf"
+Usage (from the project root):
+    python app/main.py                 # ask questions about data/pdfs/Notes.pdf
+    python app/main.py path/to/any.pdf # ask questions about any PDF (indexed on first use)
+    python app/main.py --rebuild       # force re-indexing of the PDF
+"""
 
-reader = PdfReader(pdf_path)
+import argparse
 
-print(f"Total Pages: {len(reader.pages)}")
+from rag_pipeline import DEFAULT_PDF, AIResearchAssistant
 
-# Store all text
-full_text = ""
 
-for page_number, page in enumerate(reader.pages, start=1):
+def main():
+    parser = argparse.ArgumentParser(description="Ask questions about your PDF notes.")
+    parser.add_argument("pdf", nargs="?", default=str(DEFAULT_PDF), help="Path to the PDF file")
+    parser.add_argument("--rebuild", action="store_true", help="Rebuild the vector store")
+    parser.add_argument("-k", type=int, default=4, help="Number of chunks to retrieve")
+    args = parser.parse_args()
 
-    print(f"Reading Page {page_number}...")
+    try:
+        assistant = AIResearchAssistant(pdf_path=args.pdf, k=args.k)
+    except FileNotFoundError as e:
+        parser.error(str(e))
+    assistant.setup(rebuild=args.rebuild)
 
-    text = page.extract_text()
+    print(f"\nAI Research Assistant ready for '{assistant.pdf_path.name}'! "
+          "Ask a question (type 'exit' to quit).\n")
+    while True:
+        try:
+            question = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not question:
+            continue
+        if question.lower() in {"exit", "quit", "q"}:
+            break
 
-    if text:
-        full_text += text + "\n"
+        try:
+            result = assistant.ask(question)
+        except Exception as e:  # keep the chat loop alive on API/network errors
+            print(f"Error: {e}\n")
+            continue
 
-print("\nExtraction Completed!")
+        print(f"\nAssistant: {result['answer']}")
+        if result["pages"]:
+            print(f"Sources: pages {', '.join(map(str, result['pages']))}")
+        print()
 
-print(f"Total Characters: {len(full_text)}")
+
+if __name__ == "__main__":
+    main()
