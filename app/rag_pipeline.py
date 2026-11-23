@@ -33,8 +33,13 @@ PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
+def load_embeddings():
+    """Load the sentence-transformers embedding model (slow; reuse the result)."""
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+
+
 class AIResearchAssistant:
-    def __init__(self, pdf_path=DEFAULT_PDF, persist_directory=None, k: int = 4):
+    def __init__(self, pdf_path=DEFAULT_PDF, persist_directory=None, k: int = 4, embeddings=None):
         self.pdf_path = Path(pdf_path)
         if not self.pdf_path.is_file():
             raise FileNotFoundError(f"PDF not found: {self.pdf_path}")
@@ -45,7 +50,7 @@ class AIResearchAssistant:
             persist_directory = DEFAULT_DB_DIR / f"{self.pdf_path.stem}_{digest}"
         self.persist_directory = str(persist_directory)
         self.k = k
-        self.embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        self.embeddings = embeddings or load_embeddings()
         self.vector_store = None
         self.retriever = None
         self._llm = None

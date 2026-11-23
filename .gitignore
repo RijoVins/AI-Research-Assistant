@@ -5,3 +5,4 @@ __pycache__/
 .vscode/
 .venv/
 chroma_db/
+data/pdfs/uploads/

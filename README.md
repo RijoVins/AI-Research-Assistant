@@ -17,6 +17,17 @@ cp .env.example .env   # then put your GROQ_API_KEY in .env
 
 ## Usage
 
+### Web app (recommended)
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Opens a landing page in your browser. Upload any PDF (or use the sample notes) and chat with it;
+each answer shows the source pages and the retrieved passages.
+
+### Command line
+
 Put your PDF at `data/pdfs/Notes.pdf`, then from the project root:
 
 ```bash
@@ -29,6 +40,7 @@ python app/main.py --rebuild    # force re-indexing
 
 | File | Purpose |
 |------|---------|
+| `app/streamlit_app.py` | Web UI: landing page, PDF upload, chat |
 | `app/main.py` | Interactive CLI chat |
 | `app/rag_pipeline.py` | `AIResearchAssistant` class: ingestion, retrieval, answering |
 | `app/chunker.py` | Learning step: naive fixed-size chunking |
