@@ -97,6 +97,7 @@ def settings(tmp_path):
         chunk_size=200,
         chunk_overlap=20,
         top_k=2,
+        llm_base_url=None,  # default to Groq regardless of the developer's .env
     )
 
 

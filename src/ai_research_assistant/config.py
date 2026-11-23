@@ -26,6 +26,8 @@ class Settings:
     sample_pdf: Path
     embedding_model: str
     llm_model: str
+    llm_base_url: str | None  # set -> use an OpenAI-compatible API instead of Groq
+    llm_provider_name: str
     temperature: float
     chunk_size: int
     chunk_overlap: int
@@ -38,12 +40,34 @@ class Settings:
             upload_dir=_env_path("UPLOAD_DIR", PROJECT_ROOT / "data" / "pdfs" / "uploads"),
             sample_pdf=_env_path("SAMPLE_PDF", PROJECT_ROOT / "data" / "pdfs" / "Notes.pdf"),
             embedding_model=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
-            llm_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            llm_model=(
+                os.getenv("LLM_MODEL") or os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile"
+            ),
+            llm_base_url=os.getenv("LLM_BASE_URL") or None,
+            llm_provider_name=os.getenv("LLM_PROVIDER_NAME", "OpenAI-compatible API"),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
             chunk_size=int(os.getenv("CHUNK_SIZE", "1000")),
             chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "200")),
             top_k=int(os.getenv("TOP_K", "4")),
         )
+
+    @property
+    def uses_openai_compatible(self) -> bool:
+        """True when LLM_BASE_URL points at an OpenAI-compatible gateway (OmniRoute, etc.)."""
+        return bool(self.llm_base_url)
+
+    @property
+    def provider_label(self) -> str:
+        return self.llm_provider_name if self.uses_openai_compatible else "Groq"
+
+    @property
+    def api_key_env(self) -> str:
+        """Name of the environment variable holding the LLM API key."""
+        return "LLM_API_KEY" if self.uses_openai_compatible else "GROQ_API_KEY"
+
+    def has_api_key(self) -> bool:
+        # Read at call time so a key entered in the UI is picked up immediately.
+        return bool(os.getenv(self.api_key_env))
 
 
 settings = Settings.from_env()

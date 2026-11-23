@@ -49,22 +49,32 @@ def file_hash(path) -> str:
         return hashlib.sha1(f.read()).hexdigest()
 
 
+def _api_errors(name: str) -> tuple[type[Exception], ...]:
+    """The same-named exception class from both the Groq and OpenAI SDKs."""
+    import groq
+    import openai
+
+    return getattr(groq, name), getattr(openai, name)
+
+
 def friendly_error(e: Exception) -> str:
     """Turn API/library exceptions into messages a user can act on."""
-    import groq
-
+    provider = settings.provider_label
     if isinstance(e, MissingAPIKeyError):
-        return "🔑 Add your Groq API key above to start asking questions."
-    if isinstance(e, groq.AuthenticationError):
-        return "🔑 Your Groq API key was rejected. Check that it's correct and paste it again."
-    if isinstance(e, groq.RateLimitError):
-        return "⏳ Groq's rate limit was reached. Wait a few seconds and try again."
-    if isinstance(e, groq.APIConnectionError):
-        return "🌐 Couldn't reach Groq. Check your internet connection and try again."
-    if isinstance(e, groq.NotFoundError):
+        return f"🔑 Add your {provider} API key above to start asking questions."
+    if isinstance(e, _api_errors("AuthenticationError")):
+        return f"🔑 Your {provider} API key was rejected. Check that it's correct and try again."
+    if isinstance(e, _api_errors("RateLimitError")):
+        return f"⏳ {provider}'s rate limit was reached. Wait a few seconds and try again."
+    if isinstance(e, _api_errors("APIConnectionError")):
+        where = f" at `{settings.llm_base_url}`" if settings.uses_openai_compatible else ""
         return (
-            "🤖 The configured AI model isn't available. Set `GROQ_MODEL` in your "
-            ".env file to a current Groq model."
+            f"🌐 Couldn't reach {provider}{where}. Check that it's running and that you're online."
+        )
+    if isinstance(e, _api_errors("NotFoundError")):
+        return (
+            f"🤖 The model `{settings.llm_model}` isn't available on {provider}. "
+            "Set `LLM_MODEL` in your .env file to a model it offers."
         )
     return f"Something went wrong: {e}"
 
@@ -95,7 +105,7 @@ def show_sources(docs):
 
 st.session_state.setdefault("pdf_path", None)
 st.session_state.setdefault("chats", {})  # pdf path -> list of messages
-has_key = bool(os.getenv("GROQ_API_KEY"))
+has_key = settings.has_api_key()
 
 
 # ----------------------------------------------------------------------
@@ -132,9 +142,9 @@ with st.sidebar:
 
     st.divider()
     if has_key:
-        st.success("AI connected", icon="✅")
+        st.success(f"AI connected ({settings.provider_label} · {settings.llm_model})", icon="✅")
     else:
-        st.warning("AI not connected: add your Groq API key", icon="🔑")
+        st.warning(f"AI not connected: add your {settings.provider_label} API key", icon="🔑")
 
     with st.expander("⚙️ Advanced settings"):
         k = st.slider(
@@ -245,16 +255,22 @@ st.caption(f"Answers are based only on **{name}**.")
 if not has_key:
     with st.container(border=True):
         st.markdown("**🔑 Connect the AI to start asking questions**")
+        where = (
+            f"from your {settings.provider_label} dashboard"
+            if settings.uses_openai_compatible
+            else "(free) from [console.groq.com/keys](https://console.groq.com/keys)"
+        )
         st.caption(
-            "Paste a free Groq API key from "
-            "[console.groq.com/keys](https://console.groq.com/keys). "
-            "To skip this step next time, save it as `GROQ_API_KEY` in the project's `.env` file."
+            f"Paste your {settings.provider_label} API key {where}. To skip this step next "
+            f"time, save it as `{settings.api_key_env}` in the project's `.env` file."
         )
         key = st.text_input(
-            "Groq API key", type="password", placeholder="gsk_...", label_visibility="collapsed"
+            f"{settings.provider_label} API key",
+            type="password",
+            label_visibility="collapsed",
         )
         if key:
-            os.environ["GROQ_API_KEY"] = key.strip()
+            os.environ[settings.api_key_env] = key.strip()
             assistant.reset_llm()
             st.rerun()
 

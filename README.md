@@ -48,14 +48,14 @@ flowchart LR
 | Orchestration | LangChain (LCEL) |
 | Embeddings | Hugging Face `sentence-transformers/all-MiniLM-L6-v2` (runs locally) |
 | Vector database | ChromaDB (persistent) |
-| LLM | Groq (`llama-3.3-70b-versatile` by default) |
+| LLM | Groq (default), or any OpenAI-compatible API: OmniRoute, OpenRouter, Ollama, etc. |
 | PDF parsing | pypdf |
 | UI | Streamlit |
 | Quality | pytest, Ruff, GitHub Actions |
 
 ## 🚀 Getting started
 
-**Prerequisites:** Python 3.10+ and a free [Groq API key](https://console.groq.com/keys).
+**Prerequisites:** Python 3.10+ and an LLM API key: a free [Groq key](https://console.groq.com/keys), or a key for any OpenAI-compatible gateway such as OmniRoute (see [Configuration](#️-configuration)).
 
 ```bash
 git clone https://github.com/RijoVins/AI-Research-Assistant.git
@@ -68,7 +68,7 @@ source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
-cp .env.example .env                 # then set GROQ_API_KEY in .env
+cp .env.example .env                 # then add your API key (see Configuration)
 ```
 
 ## 💻 Usage
@@ -105,12 +105,29 @@ print(answer.text, answer.pages)
 
 ## ⚙️ Configuration
 
-All settings can be overridden through environment variables or `.env`:
+All settings can be overridden through environment variables or `.env`.
+
+### Choosing the LLM provider
+
+**Groq (default):** set only `GROQ_API_KEY`.
+
+**Any OpenAI-compatible API** (OmniRoute, OpenRouter, Ollama, LM Studio, ...): setting
+`LLM_BASE_URL` switches the app to it. Copy the values from your provider's dashboard:
+
+```env
+LLM_BASE_URL=http://localhost:PORT/v1      # your OmniRoute endpoint
+LLM_API_KEY=your_omniroute_key
+LLM_MODEL=model-name-from-your-dashboard
+LLM_PROVIDER_NAME=OmniRoute                # optional: name shown in the UI
+```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GROQ_API_KEY` | *(required)* | Groq API key |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat model |
+| `GROQ_API_KEY` | | Groq API key (used when `LLM_BASE_URL` is not set) |
+| `LLM_BASE_URL` | | Base URL of an OpenAI-compatible API; enables that provider |
+| `LLM_API_KEY` | | API key for the OpenAI-compatible provider |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | Chat model name (`GROQ_MODEL` also accepted) |
+| `LLM_PROVIDER_NAME` | `OpenAI-compatible API` | Display name in the UI |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Chunking parameters (characters) |
 | `TOP_K` | `4` | Passages retrieved per question |

@@ -39,12 +39,27 @@ def load_embeddings(model_name: str | None = None) -> Embeddings:
 
 
 def default_llm(cfg: Settings) -> BaseChatModel:
-    """Create the Groq chat model, failing early with a clear message if no key is set."""
-    if not os.getenv("GROQ_API_KEY"):
+    """Create the configured chat model, failing early with a clear message if no key is set.
+
+    Uses any OpenAI-compatible API (OmniRoute, OpenRouter, Ollama, ...) when LLM_BASE_URL is
+    set, otherwise Groq.
+    """
+    if not cfg.has_api_key():
         raise MissingAPIKeyError(
-            "GROQ_API_KEY is not set. Add it to a .env file in the project root "
+            f"{cfg.api_key_env} is not set. Add it to a .env file in the project root "
             "(see .env.example) or export it in your shell."
         )
+
+    if cfg.uses_openai_compatible:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=cfg.llm_model,
+            base_url=cfg.llm_base_url,
+            api_key=os.environ[cfg.api_key_env],
+            temperature=cfg.temperature,
+        )
+
     from langchain_groq import ChatGroq
 
     return ChatGroq(model=cfg.llm_model, temperature=cfg.temperature)
