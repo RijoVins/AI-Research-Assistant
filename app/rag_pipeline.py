@@ -52,7 +52,6 @@ class AIResearchAssistant:
         self.k = k
         self.embeddings = embeddings or load_embeddings()
         self.vector_store = None
-        self.retriever = None
         self._llm = None
 
     # ------------------------------------------------------------------
@@ -73,63 +72,85 @@ class AIResearchAssistant:
         print(f"Extracted text from {len(pages)}/{len(reader.pages)} pages.")
         return pages
 
-    def ingest_pdf(self):
+    def ingest_pdf(self, progress=None, batch_size: int = 32):
+        """Chunk + embed the PDF into Chroma.
+
+        progress: optional callback(fraction: float, message: str) for UIs.
+        """
+        report = progress or (lambda fraction, message: print(message))
+
+        report(0.0, "Reading PDF...")
         pages = self.load_pdf_pages()
         if not pages:
-            raise ValueError(f"No extractable text found in {self.pdf_path}")
+            raise ValueError(
+                "No extractable text found in this PDF. It may be a scanned image; "
+                "try a PDF with selectable text."
+            )
 
-        print("Splitting text into smart chunks...")
+        report(0.05, "Splitting text into chunks...")
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = splitter.split_documents(pages)
-        print(f"Created {len(docs)} chunks.")
 
-        print("Creating vector store (Chroma)...")
-        self.vector_store = Chroma.from_documents(
-            documents=docs,
-            embedding=self.embeddings,
-            persist_directory=self.persist_directory,
+        # Start clean: drop any partial index left by an interrupted run
+        self._marker().unlink(missing_ok=True)
+        if os.path.isdir(self.persist_directory):
+            Chroma(persist_directory=self.persist_directory,
+                   embedding_function=self.embeddings).delete_collection()
+
+        # Embed in batches so callers can show real progress
+        self.vector_store = Chroma(
+            persist_directory=self.persist_directory, embedding_function=self.embeddings
         )
-        self._make_retriever()
-        print("Ingestion completed successfully!")
+        for i in range(0, len(docs), batch_size):
+            self.vector_store.add_documents(docs[i:i + batch_size])
+            done = min(i + batch_size, len(docs))
+            report(0.05 + 0.95 * done / len(docs), f"Embedding chunks {done}/{len(docs)}...")
+        self._marker().write_text("ok")
+        report(1.0, f"Indexed {len(docs)} chunks from {len(pages)} pages.")
+
+    def _marker(self) -> Path:
+        """File written only after indexing finishes, so partial indexes are never used."""
+        return Path(self.persist_directory) / ".index_complete"
 
     def load_vector_store(self) -> bool:
         """Load an existing, non-empty vector store. Returns False if none exists."""
-        if not os.path.isdir(self.persist_directory):
+        if not self._marker().exists():
             return False
-        print(f"Loading existing vector store from {self.persist_directory}...")
         store = Chroma(persist_directory=self.persist_directory, embedding_function=self.embeddings)
         if not store.get(limit=1)["ids"]:
-            print("Vector store is empty.")
             return False
         self.vector_store = store
-        self._make_retriever()
-        print("Vector store loaded successfully!")
+        print(f"Loaded existing vector store from {self.persist_directory}")
         return True
 
-    def setup(self, rebuild: bool = False):
+    def setup(self, rebuild: bool = False, progress=None):
         """Load the vector store if present, otherwise (or if rebuild) ingest the PDF."""
-        if rebuild and os.path.isdir(self.persist_directory):
-            Chroma(persist_directory=self.persist_directory,
-                   embedding_function=self.embeddings).delete_collection()
         if rebuild or not self.load_vector_store():
-            self.ingest_pdf()
+            self.ingest_pdf(progress=progress)
 
-    def _make_retriever(self):
-        self.retriever = self.vector_store.as_retriever(
-            search_type="similarity", search_kwargs={"k": self.k}
-        )
+    @property
+    def is_ready(self) -> bool:
+        return self.vector_store is not None
+
+    def stats(self) -> dict:
+        """Page and chunk counts for display."""
+        return {
+            "pages": len(PdfReader(self.pdf_path).pages),
+            "chunks": self.vector_store._collection.count() if self.vector_store else 0,
+        }
 
     # ------------------------------------------------------------------
     # Retrieval + generation
     # ------------------------------------------------------------------
     def retrieve(self, question: str) -> dict:
-        if not self.retriever:
-            raise ValueError("Retriever not initialized. Call setup() first.")
-        docs = self.retriever.invoke(question)
+        if not self.is_ready:
+            raise ValueError("Vector store not initialized. Call setup() first.")
+        docs = self.vector_store.similarity_search(question, k=self.k)
         context = "\n\n".join(
             f"[Page {d.metadata.get('page', '?')}]\n{d.page_content}" for d in docs
         )
-        return {"context": context, "source_docs": docs}
+        pages = sorted({d.metadata.get("page") for d in docs} - {None})
+        return {"context": context, "source_docs": docs, "pages": pages}
 
     @property
     def llm(self):
@@ -143,13 +164,20 @@ class AIResearchAssistant:
             self._llm = ChatGroq(model=DEFAULT_LLM_MODEL, temperature=0)
         return self._llm
 
+    def _chain(self):
+        return PROMPT | self.llm | StrOutputParser()
+
     def ask(self, question: str) -> dict:
         """Retrieve relevant chunks and generate an answer with the LLM."""
         retrieved = self.retrieve(question)
-        chain = PROMPT | self.llm | StrOutputParser()
-        answer = chain.invoke({"context": retrieved["context"], "question": question})
-        pages = sorted({d.metadata.get("page") for d in retrieved["source_docs"]} - {None})
-        return {"answer": answer, "pages": pages, "source_docs": retrieved["source_docs"]}
+        answer = self._chain().invoke({"context": retrieved["context"], "question": question})
+        return {"answer": answer, "pages": retrieved["pages"], "source_docs": retrieved["source_docs"]}
+
+    def ask_stream(self, question: str) -> dict:
+        """Like ask(), but 'answer' is a generator yielding text as the LLM writes it."""
+        retrieved = self.retrieve(question)
+        stream = self._chain().stream({"context": retrieved["context"], "question": question})
+        return {"answer": stream, "pages": retrieved["pages"], "source_docs": retrieved["source_docs"]}
 
 
 if __name__ == "__main__":
